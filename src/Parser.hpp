@@ -1,65 +1,43 @@
-#ifndef PL0_PARSER_HPP
-#define PL0_PARSER_HPP
+#ifndef PARSER_HPP
+#define PARSER_HPP
 
-#include "Ast/Ast.hpp"
-#include "Lexer.hpp"
-#include <ostream>
+#include "ast.hpp"
+#include "lexer.hpp"
+#include <exception>
+#include <memory>
 #include <string>
-#include <string_view>
+#include <cstdint>
 
-namespace PL0 {
-
-class Parser
-{
+class SyntaxError : public std::exception {
 public:
-    Parser(const std::string& input, std::ostream& diagnostic)
-        : diagnostic{diagnostic}
-        , lex{input, diagnostic}
-        , id{lex()}
-        , failed{false}
-    {}
-
-    std::unique_ptr<Ast::Program> operator()();
-
-private:
-    using ID = Token::ID;
-
-    std::unique_ptr<Ast::Program> parseProgram();
-    std::unique_ptr<Ast::Block> parseBlock();
-    std::unique_ptr<Ast::Statement> parseStatement();
-    std::unique_ptr<Ast::Condition> parseCondition();
-    std::unique_ptr<Ast::BinaryCondition> parseBinaryCondition();
-    std::unique_ptr<Ast::Expression> parseExpression();
-    std::unique_ptr<Ast::Expression> parseTerm();
-    std::unique_ptr<Ast::Expression> parseFactor();
-    std::unique_ptr<Ast::Number> extractNumber();
-    std::unique_ptr<Ast::Identifier> extractIdentifier();
-
-    void error(std::string_view message);
-    void skip();
-
-    bool match(const ID expected) const
-    { return id == expected; }
-
-    bool consume(const ID expected)
-    {
-        if (match(expected)) {
-            next();
-            return true;
-        }
-
-        return false;
-    }
-
-    void next()
-    { id = lex(); }
-
-    std::ostream& diagnostic;
-    Lexer lex;
-    ID id;
-    bool failed;
+    explicit SyntaxError(const char* what);
+    explicit SyntaxError(const std::string& what);
 };
 
-} // namespace
+class Parser {
+public:
+    explicit Parser(const char* path);
+    explicit Parser(const std::string& path);
+    std::unique_ptr<Program> parse();
 
-#endif // PL0_PARSER_HPP
+private:
+    std::unique_ptr<Program> parse_program();
+    std::unique_ptr<Block> parse_block();
+    std::unique_ptr<Stmt> parse_statement();
+    std::unique_ptr<Cond> parse_condition();
+    std::unique_ptr<Expr> parse_expression();
+    std::unique_ptr<Expr> parse_term();
+    std::unique_ptr<Expr> parse_factor();
+    std::unique_ptr<Number> parse_number();
+    std::unique_ptr<Identifier> parse_identifier();
+
+    bool match(const TokenID id) const;
+    bool consume(const TokenID id);
+    void next();
+    void error(const char* message);
+
+    Lexer lexer;
+    Token token;
+};
+
+#endif // PARSER_HPP

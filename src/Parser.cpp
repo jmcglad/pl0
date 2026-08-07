@@ -1,392 +1,344 @@
-#include "Parser.hpp"
+#include "parser.hpp"
 
-#include <algorithm>
+#include <fmt/format.h>
 #include <utility>
+#include <variant>
 
-// TODO: Skip ahead to some sane position each time an error occurs
+SyntaxError::SyntaxError(const char* what)
+    : std::exception(what)
+{}
 
-namespace PL0 {
+SyntaxError::SyntaxError(const std::string& what)
+    : SyntaxError(what.c_str())
+{}
 
-std::unique_ptr<Ast::Program> Parser::operator()()
-{
-    auto program = parseProgram();
+Parser::Parser(const char* path)
+    : lexer(path)
+    , token()
+{}
 
-    if (!match(ID::EndOfFile)) {
-        error("junk after end of program");
-    }
+Parser::Parser(const std::string& path)
+    : Parser(path.c_str())
+{}
 
-    if (failed) {
-        return nullptr;
+std::unique_ptr<Program> Parser::parse() {
+    token = lexer.next();
+
+    auto program = parse_program();
+
+    if (!match(TokenID::EndOfFile)) {
+        error("junk at end of file");
     }
 
     return program;
 }
 
-std::unique_ptr<Ast::Program> Parser::parseProgram()
-{
-    auto program = std::make_unique<Ast::Program>();
+std::unique_ptr<Program> Parser::parse_program() {
+    auto program = std::make_unique<Program>();
 
-    program->block = parseBlock();
+    program->block = parse_block();
 
-    if (!consume(ID::Period)) {
+    if (!consume(TokenID::Period)) {
         error("missing '.' at end of program");
     }
 
     return program;
 }
 
-std::unique_ptr<Ast::Block> Parser::parseBlock()
-{
-    auto block = std::make_unique<Ast::Block>();
+std::unique_ptr<Block> Parser::parse_block() {
+    auto block = std::make_unique<Block>();
 
-    if (consume(ID::Const)) {
+    if (consume(TokenID::Const)) {
         do {
-            auto constant = std::make_unique<Ast::Constant>();
+            auto constant = std::make_unique<Constant>();
 
-            if (match(ID::Identifier)) {
-                constant->identifier = extractIdentifier();
+            if (match(TokenID::Identifier)) {
+                constant->identifier = parse_identifier();
             } else {
                 error("identifier expected for const name");
-                skip();
-                continue;
             }
 
-            if (!consume(ID::Equal)) {
+            if (!consume(TokenID::Equal)) {
                 error("missing '=' after const identifier");
-                skip();
-                continue;
             }
 
-            if (match(ID::Number)) {
-                constant->number = extractNumber();
+            if (match(TokenID::Number)) {
+                constant->number = parse_number();
             } else {
                 error("number expected for const value");
-                skip();
-                continue;
             }
 
             block->constants.push_back(std::move(constant));
-        } while (consume(ID::Comma));
+        } while (consume(TokenID::Comma));
 
-        if (!consume(ID::Semicolon)) {
-            error("missing ';' after const definitions");
-            skip();
+        if (!consume(TokenID::Semicolon)) {
+            error("missing ';' after const declarations");
         }
     }
 
-    if (consume(ID::Var)) {
+    if (consume(TokenID::Var)) {
         do {
-            if (match(ID::Identifier)) {
-                block->variables.push_back(extractIdentifier());
+            auto variable = std::make_unique<Variable>();
+
+            if (match(TokenID::Identifier)) {
+                variable->identifier = parse_identifier();
             } else {
                 error("identifier expected for var name");
-                skip();
-                continue;
             }
-        } while (consume(ID::Comma));
 
-        if (!consume(ID::Semicolon)) {
+            block->variables.push_back(std::move(variable));
+        } while (consume(TokenID::Comma));
+
+        if (!consume(TokenID::Semicolon)) {
             error("missing ';' after var declarations");
-            skip();
         }
     }
 
-    while (consume(ID::Procedure)) {
-        auto procedure = std::make_unique<Ast::Procedure>();
+    while (consume(TokenID::Procedure)) {
+        auto procedure = std::make_unique<Procedure>();
 
-        if (match(ID::Identifier)) {
-            procedure->identifier = extractIdentifier();
+        if (match(TokenID::Identifier)) {
+            procedure->identifier = parse_identifier();
         } else {
             error("identifier expected for procedure name");
-            skip();
-            continue;
         }
 
-        if (!consume(ID::Semicolon)) {
+        if (!consume(TokenID::Semicolon)) {
             error("missing ';' after procedure name");
-            skip();
-            continue;
         }
 
-        procedure->block = parseBlock();
+        procedure->block = parse_block();
 
-        if (!consume(ID::Semicolon)) {
+        if (!consume(TokenID::Semicolon)) {
             error("missing ';' after procedure block");
-            skip();
-            continue;
         }
 
         block->procedures.push_back(std::move(procedure));
     }
 
-    block->statement = parseStatement();
+    block->statement = parse_statement();
 
     return block;
 }
 
-std::unique_ptr<Ast::Statement> Parser::parseStatement()
-{
-    switch (id) {
-        case ID::Identifier: {
-            auto statement = std::make_unique<Ast::AssignmentStatement>();
+std::unique_ptr<Stmt> Parser::parse_statement() {
+    if (match(TokenID::Identifier)) {
+        auto statement = std::make_unique<AssignmentStmt>();
 
-            statement->left = extractIdentifier();
+        statement->left = parse_identifier();
 
-            if (!consume(ID::Assign)) {
-                error("missing ':=' after identifier");
-                skip();
-            }
-
-            statement->right = parseExpression();
-
-            return statement;
+        if (!consume(TokenID::Assign)) {
+            error("missing ':=' after identifier");
         }
-        case ID::Call: {
-            next();
 
-            auto statement = std::make_unique<Ast::CallStatement>();
+        statement->right = parse_expression();
 
-            if (match(ID::Identifier)) {
-                statement->callee = extractIdentifier();
-            } else {
-                error("identifier expected after keyword \"call\"");
-                skip();
-            }
+        return statement;
+    } else if (consume(TokenID::Call)) {
+        auto statement = std::make_unique<CallStmt>();
 
-            return statement;
+        if (match(TokenID::Identifier)) {
+            statement->target = parse_identifier();
+        } else {
+            error("identifier expected after keyword \"call\"");
         }
-        case ID::Read: {
-            next();
 
-            auto statement = std::make_unique<Ast::ReadStatement>();
+        return statement;
+    } else if (consume(TokenID::Read)) {
+        auto statement = std::make_unique<ReadStmt>();
 
-            if (match(ID::Identifier)) {
-                statement->identifier = extractIdentifier();
-            } else {
-                error("identifier expected after '?'");
-                skip();
-            }
-
-            return statement;
+        if (match(TokenID::Identifier)) {
+            statement->identifier = parse_identifier();
+        } else {
+            error("identifier expected after '?'");
         }
-        case ID::Write: {
-            next();
-            auto statement = std::make_unique<Ast::WriteStatement>();
-            statement->expression = parseExpression();
-            return statement;
+
+        return statement;
+    } else if (consume(TokenID::Write)) {
+        auto statement = std::make_unique<WriteStmt>();
+        statement->expression = parse_expression();
+        return statement;
+    } else if (consume(TokenID::Begin)) {
+        auto statement = std::make_unique<BeginStmt>();
+
+        do {
+            statement->children.push_back(parse_statement());
+        } while (consume(TokenID::Semicolon));
+
+        if (!consume(TokenID::End)) {
+            error("expected keyword \"end\" after begin statement");
         }
-        case ID::Begin: {
-            next();
 
-            auto statement = std::make_unique<Ast::BeginStatement>();
+        return statement;
+    } else if (consume(TokenID::If)) {
+        auto statement = std::make_unique<IfStmt>();
 
-            do {
-                statement->children.push_back(parseStatement());
-            } while (consume(ID::Semicolon));
+        statement->condition = parse_condition();
 
-            if (!consume(ID::End)) {
-                error("expected keyword \"end\" after begin statement");
-                skip();
-            }
-
-            return statement;
+        if (!consume(TokenID::Then)) {
+            error("missing keyword \"then\" after if condition");
         }
-        case ID::If: {
-            next();
 
-            auto statement = std::make_unique<Ast::IfStatement>();
+        statement->statement = parse_statement();
 
-            statement->condition = parseCondition();
+        return statement;
+    } else if (consume(TokenID::While)) {
+        auto statement = std::make_unique<WhileStmt>();
 
-            if (!consume(ID::Then)) {
-                error("missing keyword \"then\" after if-condition");
-                skip();
-            }
+        statement->condition = parse_condition();
 
-            statement->consequent = parseStatement();
-
-            return statement;
+        if (!consume(TokenID::Do)) {
+            error("missing keyword \"do\" after while condition");
         }
-        case ID::While: {
-            next();
 
-            auto statement = std::make_unique<Ast::WhileStatement>();
+        statement->statement = parse_statement();
 
-            statement->condition = parseCondition();
-
-            if (!consume(ID::Do)) {
-                error("missing keyword \"do\" after while-condition");
-                skip();
-            }
-
-            statement->consequent = parseStatement();
-
-            return statement;
-        }
-        default: {
-            return nullptr;
-        }
-    }
-}
-
-std::unique_ptr<Ast::Condition> Parser::parseCondition()
-{
-    if (consume(ID::Odd)) {
-        auto condition = std::make_unique<Ast::OddCondition>();
-        condition->right = parseExpression();
-        return condition;
-    }
-
-    return parseBinaryCondition();
-}
-
-std::unique_ptr<Ast::BinaryCondition> Parser::parseBinaryCondition()
-{
-    std::unique_ptr<Ast::BinaryCondition> condition;
-
-    auto left = parseExpression();
-
-    switch (id) {
-    case ID::Equal:
-        condition = std::make_unique<Ast::EqualCondition>();
-        break;
-    case ID::NotEqual:
-        condition = std::make_unique<Ast::NotEqualCondition>();
-        break;
-    case ID::LessThan:
-        condition = std::make_unique<Ast::LessThanCondition>();
-        break;
-    case ID::LessEqual:
-        condition = std::make_unique<Ast::LessEqualCondition>();
-        break;
-    case ID::GreaterThan:
-        condition = std::make_unique<Ast::GreaterThanCondition>();
-        break;
-    case ID::GreaterEqual:
-        condition = std::make_unique<Ast::GreaterEqualCondition>();
-        break;
-    default:
-        error("expected a conditional operator");
-        skip();
+        return statement;
+    } else {
+        error("invalid statement");
         return nullptr;
     }
-
-    next();
-
-    condition->left = std::move(left);
-    condition->right = parseExpression();
-
-    return condition;
 }
 
-std::unique_ptr<Ast::Expression> Parser::parseExpression()
-{
-    std::unique_ptr<Ast::Expression> expression;
-
-    if (consume(ID::Plus)) {
-        expression = parseTerm();
-    } else if (consume(ID::Minus)) {
-        auto subExpression = std::make_unique<Ast::NegationExpression>();
-        subExpression->right = parseTerm();
-        expression = std::move(subExpression);
+std::unique_ptr<Cond> Parser::parse_condition() {
+    if (consume(TokenID::Odd)) {
+        auto condition = std::make_unique<OddCond>();
+        condition->right = parse_expression();
+        return condition;
     } else {
-        expression = parseTerm();
-    }
+        std::unique_ptr<BinaryCond> condition;
 
-    while (match(ID::Plus) || match(ID::Minus)) {
-        std::unique_ptr<Ast::BinaryExpression> subExpression;
+        auto left = parse_expression();
 
-        if (match(ID::Plus)) {
-            subExpression = std::make_unique<Ast::AdditionExpression>();
+        if (consume(TokenID::Equal)) {
+            condition = std::make_unique<EqualCond>();
+        } else if (consume(TokenID::NotEqual)) {
+            condition = std::make_unique<NotEqualCond>();
+        } else if (consume(TokenID::LessThan)) {
+            condition = std::make_unique<LessThanCond>();
+        } else if (consume(TokenID::LessEqual)) {
+            condition = std::make_unique<LessEqualCond>();
+        } else if (consume(TokenID::GreaterThan)) {
+            condition = std::make_unique<GreaterThanCond>();
+        } else if (consume(TokenID::GreaterEqual)) {
+            condition = std::make_unique<GreaterEqualCond>();
         } else {
-            subExpression = std::make_unique<Ast::SubtractionExpression>();
+            error("expected a condition operator");
+            return nullptr;
         }
 
-        next();
+        condition->left = std::move(left);
+        condition->right = parse_expression();
 
-        subExpression->left = std::move(expression);
-        subExpression->right = parseTerm();
-        expression = std::move(subExpression);
+        return condition;
+    }
+}
+
+std::unique_ptr<Expr> Parser::parse_expression() {
+    std::unique_ptr<Expr> expression;
+
+    if (consume(TokenID::Plus)) {
+        expression = parse_term();
+    } else if (consume(TokenID::Minus)) {
+        auto negation = std::make_unique<NegationExpr>();
+        negation->right = parse_term();
+        expression = std::move(negation);
+    } else {
+        expression = parse_term();
+    }
+
+    for (;;) {
+        std::unique_ptr<BinaryExpr> sub_expression;
+
+        if (consume(TokenID::Plus)) {
+            sub_expression = std::make_unique<AdditionExpr>();
+        } else if (consume(TokenID::Minus)) {
+            sub_expression = std::make_unique<SubtractionExpr>();
+        } else {
+            break;
+        }
+
+        sub_expression->left = std::move(expression);
+        sub_expression->right = parse_term();
+        expression = std::move(sub_expression);
     }
 
     return expression;
 }
 
-std::unique_ptr<Ast::Expression> Parser::parseTerm()
-{
-    auto term = parseFactor();
+std::unique_ptr<Expr> Parser::parse_term() {
+    auto term = parse_factor();
 
-    while (match(ID::Multiply) || match(ID::Divide)) {
-        std::unique_ptr<Ast::BinaryExpression> subTerm;
+    for (;;) {
+        std::unique_ptr<BinaryExpr> sub_term;
 
-        if (match(ID::Multiply)) {
-            subTerm = std::make_unique<Ast::MultiplicationExpression>();
+        if (consume(TokenID::Multiply)) {
+            sub_term = std::make_unique<MultiplicationExpr>();
+        } else if (consume(TokenID::Divide)) {
+            sub_term = std::make_unique<DivisionExpr>();
         } else {
-            subTerm = std::make_unique<Ast::DivisionExpression>();
+            break;
         }
 
-        next();
-
-        subTerm->left = std::move(term);
-        subTerm->right = parseFactor();
-        term = std::move(subTerm);
+        sub_term->left = std::move(term);
+        sub_term->right = parse_factor();
+        term = std::move(sub_term);
     }
 
     return term;
 }
 
-std::unique_ptr<Ast::Expression> Parser::parseFactor()
-{
-    switch (id) {
-        case ID::Identifier: {
-            return extractIdentifier();
-        }
-        case ID::Number: {
-            return extractNumber();
-        }
-        case ID::LParen: {
-            next();
+std::unique_ptr<Expr> Parser::parse_factor() {
+    if (match(TokenID::Identifier)) {
+        return parse_identifier();
+    } else if (match(TokenID::Number)) {
+        return parse_number();
+    } else if (consume(TokenID::LParen)) {
+        auto expression = parse_expression();
 
-            auto expression = parseExpression();
-
-            if (!consume(ID::RParen)) {
-                error("missing ')' after expression");
-                skip();
-            }
-
-            return expression;
+        if (!consume(TokenID::RParen)) {
+            error("missing ')' after expression");
         }
-        default: {
-            return nullptr;
-        }
+
+        return expression;
+    } else {
+        error("invalid factor");
+        return nullptr;
     }
 }
 
-std::unique_ptr<Ast::Number> Parser::extractNumber()
-{
-    auto value = std::get<int>(lex.getValue());
+std::unique_ptr<Number> Parser::parse_number() {
+    auto number = std::make_unique<Number>();
+    number->value = std::get<std::int64_t>(token.value);
     next();
-    return std::make_unique<Ast::Number>(value);
+    return number;
 }
 
-std::unique_ptr<Ast::Identifier> Parser::extractIdentifier()
-{
-    auto name = std::get<std::string>(lex.getValue());
+std::unique_ptr<Identifier> Parser::parse_identifier() {
+    auto identifier = std::make_unique<Identifier>();
+    identifier->name = std::get<std::string>(token.value);
     next();
-    return std::make_unique<Ast::Identifier>(name);
+    return identifier;
 }
 
-void Parser::error(std::string_view message)
-{
-    failed = true;
-    diagnostic << lex.getLine() << ": error: " << message << '\n';
+bool Parser::match(const TokenID id) const {
+    return id == token.id;
 }
 
-void Parser::skip()
-{
-    while (id < ID::Const) {
+bool Parser::consume(const TokenID id) {
+    if (match(id)) {
         next();
+        return true;
     }
+
+    return false;
 }
 
-} // namespace PL0
+void Parser::next() {
+    token = lexer.next();
+}
+
+void Parser::error(const char* message) {
+    auto what = fmt::format("{}:{}: {}", token.line, token.column, message);
+    throw SyntaxError(what);
+}

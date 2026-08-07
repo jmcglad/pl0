@@ -1,33 +1,50 @@
 {
-  "tasks": [
-    {
-      "label": "Build",
-      "type": "shell",
-      "command": "cmake --build .",
-      "options": {
-        "cwd": "${workspaceFolder}/build"
-      },
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
-    },
-    {
-      "label": "Clean",
-      "type": "shell",
-      "command": "cmake --build . --target clean",
-      "options": {
-        "cwd": "${workspaceFolder}/build"
-      }
-    },
-    {
-      "label": "Benchmark",
-      "type": "shell",
-      "command": "./benchmark/pl0-benchmark",
-      "options": {
-        "cwd": "${workspaceFolder}/build"
-      }
-    }
-  ],
-  "version": "2.0.0"
+    "tasks": [
+        {
+            "label": "Install (Release)",
+            "type": "process",
+            "command": "conan",
+            "args": ["install", "--build=missing"]
+        },
+        {
+            "label": "Install (Debug)",
+            "type": "process",
+            "command": "conan",
+            "args": ["install", "--build=missing", "-s", "build_type=Debug"],
+            "dependsOn": ["Install (Release)"]
+        },
+        {
+            "label": "Configure (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--preset", "conan-default"],
+            "dependsOn": ["Install (Debug)"]
+        },
+        {
+            "label": "Configure (Release)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--preset", "conan-default"],
+            "dependsOn": ["Install (Release)"]
+        },
+        {
+            "label": "Build (Debug)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "--preset", "conan-debug"],
+            "dependsOn": ["Configure (Debug)"],
+            "problemMatcher": "$msCompile",
+            "isBuildCommand": true
+        },
+        {
+            "label": "Build (Release)",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "--preset", "conan-release"],
+            "dependsOn": ["Configure (Release)"],
+            "problemMatcher": "$msCompile",
+            "isBuildCommand": true
+        }
+    ],
+    "version": "2.0.0"
 }

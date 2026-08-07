@@ -1,25 +1,29 @@
+find_package(CLI11 REQUIRED)
+find_package(fmt REQUIRED)
+find_package(Git REQUIRED)
+
 find_program(RE2C re2c)
 
-set(LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/Lexer.re)
-set(LEXER_CPP ${CMAKE_CURRENT_BINARY_DIR}/Lexer.cpp)
-
-add_custom_command(
-OUTPUT
-    ${LEXER_CPP}
-COMMAND
-    ${RE2C} -W -o ${LEXER_CPP} ${LEXER_RE}
-MAIN_DEPENDENCY
-    ${LEXER_RE}
-VERBATIM
+execute_process(
+    COMMAND ${GIT_EXECUTABLE} --no-pager log -n 1 --format=%H
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-find_package(Boost REQUIRED COMPONENTS filesystem)
+configure_file("version.in.hpp" "version.hpp" @ONLY)
 
-add_library(pl0 ${LEXER_CPP} Parser.cpp Evaluator.cpp DotGenerator.cpp)
-target_compile_features(pl0 PUBLIC cxx_std_17)
-target_include_directories(pl0 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(pl0 PUBLIC Boost::boost)
+set(LEXER_IN ${CMAKE_CURRENT_SOURCE_DIR}/lexer.re.cpp)
+set(LEXER_CPP ${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp)
 
-add_executable(app main.cpp)
-target_link_libraries(app PRIVATE pl0 Boost::filesystem)
-set_target_properties(app PROPERTIES OUTPUT_NAME pl0)
+add_custom_command(
+    OUTPUT ${LEXER_CPP}
+    COMMAND ${RE2C} -W -o ${LEXER_CPP} ${LEXER_IN}
+    MAIN_DEPENDENCY ${LEXER_IN}
+    VERBATIM CODEGEN
+)
+
+add_executable(pl0 ${LEXER_CPP} parser.cpp evaluator.cpp dot.cpp main.cpp)
+target_compile_features(pl0 PRIVATE cxx_std_23)
+target_include_directories(pl0 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(pl0 PRIVATE CLI11::CLI11 fmt::fmt)

@@ -1,0 +1,11 @@
+{
+    "configurations": [
+        {
+            "name": "Common",
+            "cppStandard": "c++23",
+            "includePath": ["${workspaceFolder}/**", "~/.conan2/**"]
+        }
+    ],
+    "version": 4,
+    "enableConfigurationSquiggles": true
+}

@@ -1,24 +1,13 @@
-#ifndef EVALUATOR_HPP
-#define EVALUATOR_HPP
+#ifndef DOT_HPP
+#define DOT_HPP
 
 #include "ast.hpp"
-#include <exception>
-#include <functional>
-#include <map>
-#include <stack>
-#include <string_view>
 #include <vector>
 #include <cstdint>
 
-class EvaluationError : public std::exception {
+class DotGenerator final : public NodeVisitor {
 public:
-    explicit EvaluationError(const char* what);
-    explicit EvaluationError(const std::string& what);
-};
-
-class Evaluator final : public NodeVisitor {
-public:
-    Evaluator();
+    DotGenerator();
     void visit(Program& program) override;
     void visit(Block& block) override;
     void visit(Constant& constant) override;
@@ -47,15 +36,13 @@ public:
     void visit(Identifier& identifier) override;
 
 private:
-    struct Scope {
-        std::map<std::string_view, const std::int64_t> constants;
-        std::map<std::string_view, int> variables;
-        std::map<std::string_view, std::reference_wrapper<Procedure>> procedures;
-    };
+    void start_vertex(const char* name);
+    void start_unlinked_vertex(const char* name);
+    void end_vertex();
+    void add_edge_to_parent();
 
-    std::vector<Scope> scopes;
-    std::stack<std::int64_t> values;
-    bool condition_result;
+    std::uint64_t id;
+    std::vector<std::uint64_t> stack;
 };
 
-#endif // EVALUATOR_HPP
+#endif // DOT_HPP
