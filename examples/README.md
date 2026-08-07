@@ -1,3 +1,3 @@
 # Examples
 
-Example PL0 programs taken from https://en.wikipedia.org/wiki/PL/0 with some typos corrected.
+This folder contains example PL/0 programs originally copied from [Wikipedia](https://en.wikipedia.org/wiki/PL/0).
